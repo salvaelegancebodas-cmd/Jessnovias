@@ -1,0 +1,283 @@
+// ============================================================
+// JESS NOVIAS MAKEUP — Prisma Schema
+// PostgreSQL. Zona horaria de aplicación: Europe/Madrid (los
+// timestamps se guardan en UTC; la conversión se hace en la capa
+// de aplicación, ver src/lib/timezone.ts)
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Auth / admin ----------
+
+model Admin {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// ---------- Clientes / leads ----------
+
+enum ClientStatus {
+  LEAD
+  CONTACTED
+  QUOTE_SENT
+  RESERVED
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+}
+
+model Client {
+  id            String       @id @default(cuid())
+  firstName     String
+  lastName      String
+  email         String
+  phone         String
+  weddingDate   DateTime?
+  weddingPlace  String?
+  instagram     String?
+  budgetNotes   String?
+  depositAmount Decimal?     @db.Decimal(10, 2)
+  balanceDue    Decimal?     @db.Decimal(10, 2)
+  status        ClientStatus @default(LEAD)
+  notes         String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  bookings Booking[]
+  leads    Lead[]
+
+  @@index([email])
+}
+
+enum LeadStage {
+  NUEVO
+  CONTACTADO
+  PRESUPUESTO_ENVIADO
+  SEGUIMIENTO
+  RESERVADO
+  PERDIDO
+}
+
+model Lead {
+  id        String    @id @default(cuid())
+  clientId  String?
+  client    Client?   @relation(fields: [clientId], references: [id])
+  source    String? // web-form, whatsapp, instagram, etc.
+  message   String?
+  stage     LeadStage @default(NUEVO)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+// ---------- Servicios ----------
+
+model Service {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  description String?
+  durationMin Int // duración del servicio en minutos
+  bufferBeforeMin Int  @default(0)
+  bufferAfterMin  Int  @default(15)
+  price       Decimal? @db.Decimal(10, 2) // null = "consultar"
+  depositAmount Decimal? @db.Decimal(10, 2)
+  active      Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  bookingItems BookingItem[]
+}
+
+// ---------- Equipo ----------
+
+model TeamMember {
+  id          String   @id @default(cuid())
+  name        String
+  specialty   String?
+  bio         String?
+  photoUrl    String?
+  active      Boolean  @default(true)
+  sortOrder   Int      @default(0)
+}
+
+// ---------- Disponibilidad ----------
+
+model WorkingHours {
+  id        String @id @default(cuid())
+  weekday   Int // 0=domingo ... 6=sábado
+  startTime String // "09:00"
+  endTime   String // "20:00"
+  active    Boolean @default(true)
+}
+
+model BlockedDate {
+  id         String   @id @default(cuid())
+  date       DateTime // día completo bloqueado
+  startTime  String?  // opcional: bloqueo parcial
+  endTime    String?
+  reason     String? // Vacaciones, Otra boda, Formación, Otro...
+  googleEventId String?
+  createdAt  DateTime @default(now())
+}
+
+// ---------- Reservas ----------
+
+enum BookingStatus {
+  HOLD
+  PENDING
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+  NO_SHOW
+}
+
+model Booking {
+  id          String        @id @default(cuid())
+  clientId    String
+  client      Client        @relation(fields: [clientId], references: [id])
+
+  date        DateTime // fecha del servicio (prueba o día B)
+  startTime   String // "10:00" hora local Europe/Madrid
+  endTime     String // calculada: startTime + duration + buffers
+
+  weddingPlace String?
+  guestCount  Int?          @default(1)
+  comments    String?
+
+  status      BookingStatus @default(HOLD)
+  holdExpiresAt DateTime?   // si status=HOLD, cuándo caduca
+
+  totalPrice    Decimal?    @db.Decimal(10, 2)
+  depositAmount Decimal?    @db.Decimal(10, 2)
+  balanceDue    Decimal?    @db.Decimal(10, 2)
+  paymentMethod String? // efectivo, transferencia, bizum, stripe
+
+  googleEventId String?
+  googleSyncError String? // si falla la sincronización, se registra aquí
+
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  items       BookingItem[]
+
+  @@index([date, status])
+  @@index([googleEventId])
+}
+
+model BookingItem {
+  id        String  @id @default(cuid())
+  bookingId String
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  serviceId String
+  service   Service @relation(fields: [serviceId], references: [id])
+  quantity  Int     @default(1)
+}
+
+// ---------- Google Calendar ----------
+
+model CalendarConnection {
+  id            String   @id @default(cuid())
+  googleAccountEmail String
+  // el refresh token se guarda cifrado (ver src/lib/crypto.ts), nunca en claro
+  encryptedRefreshToken String
+  calendarId    String
+  connected     Boolean  @default(true)
+  lastSyncAt    DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model CalendarSyncLog {
+  id        String   @id @default(cuid())
+  action    String // create, update, delete, poll
+  bookingId String?
+  success   Boolean
+  errorMessage String?
+  createdAt DateTime @default(now())
+}
+
+// ---------- Contenido: galería, bodas reales, opiniones, FAQ, blog ----------
+
+model GalleryImage {
+  id          String   @id @default(cuid())
+  url         String
+  title       String?
+  description String?
+  altText     String
+  category    String // NOVIAS, MAQUILLAJE, PEINADOS, INVITADAS, ANTES_DESPUES, BODAS_REALES
+  sortOrder   Int      @default(0)
+  isPlaceholder Boolean @default(false)
+  createdAt   DateTime @default(now())
+}
+
+model RealWedding {
+  id          String   @id @default(cuid())
+  slug        String   @unique // ej. maria-y-pablo
+  coupleNames String
+  weddingDate DateTime?
+  location    String?
+  description String?
+  providers   String? // JSON string opcional
+  published   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+}
+
+model Review {
+  id          String   @id @default(cuid())
+  authorName  String
+  rating      Int // 1-5
+  text        String
+  featured    Boolean  @default(false)
+  source      String? // bodas.net, google, manual
+  createdAt   DateTime @default(now())
+}
+
+model Faq {
+  id        String   @id @default(cuid())
+  question  String
+  answer    String
+  sortOrder Int      @default(0)
+  active    Boolean  @default(true)
+}
+
+model BlogPost {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  title       String
+  excerpt     String?
+  content     String
+  coverImage  String?
+  category    String?
+  author      String?
+  seoTitle    String?
+  seoDescription String?
+  published   Boolean  @default(false)
+  publishedAt DateTime?
+  createdAt   DateTime @default(now())
+}
+
+// ---------- Configuración general ----------
+
+model Setting {
+  key   String @id
+  value String // JSON string; ver src/lib/settings.ts para claves esperadas
+}
+
+model EmailTemplate {
+  id      String @id @default(cuid())
+  key     String @unique // booking_received, booking_confirmed, booking_cancelled...
+  subject String
+  bodyHtml String
+}
