@@ -1,5 +1,1 @@
-{
-  "crons": [
-    { "path": "/api/cron/release-holds", "schedule": "* * * * *" }
-  ]
-}
+ { "crons": [ { "path": "/api/cron/release-holds", "schedule": "0 3 * * *" } ] }
